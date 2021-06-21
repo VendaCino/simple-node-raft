@@ -421,14 +421,14 @@ class FollowerBehavior extends BaseRoleBehavior {
         this.onProcessingAppendEntriesRequest = true;
 
         let matchLogs = _this.persis.getLog(req.prevLogIndex, req.term);
-        if (matchLogs === null) {
+        if (matchLogs === null || matchLogs === undefined) {
             _this.logMe(`I get Log bug but no match ` + `\x1b[30;30m data:${JSON.stringify(req)}\x1b[0m`);
             _this.raftRpc.rpcRtnAppendEntries(from, {matchIndex: 0, success: false, term: _this.currentTerm});
             let indexSameLogs = _this.persis.getLog(req.prevLogIndex);
             if (indexSameLogs != null) {
                 _this.logMe(`I clear my old log ${indexSameLogs.index}`);
                 _this.persis.remove(indexSameLogs.index).then(() => this.onProcessingAppendEntriesRequest = false);
-            }
+            } else this.onProcessingAppendEntriesRequest = false;
             return;
         } else {
             let writeLog = () => {
