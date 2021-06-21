@@ -1,5 +1,5 @@
 import IO from 'socket.io';
-import http, {IncomingMessage, RequestListener, ServerResponse} from "http";
+import http, {IncomingMessage, RequestListener, Server, ServerResponse} from "http";
 import {
     AppendEntriesRequest,
     AppendEntriesResponse,
@@ -37,6 +37,7 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
     private raftNodeMap: Map<number, RaftNode> = new Map();
     private config: RaftConfig;
     private myId = -1;
+    private httpServer: Server | undefined;
 
 
     constructor(config: RaftConfig) {
@@ -51,6 +52,10 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
     end(): void {
         if (!this.started) return;
         this.io?.close(() => console.log(`${this.me}: rpc end ok`));
+        this.httpServer?.close(() => console.log(`${this.me}: rpc server end ok`))
+        for (let socket of this.cioMap.values()) {
+            socket.close();
+        }
     }
 
 
@@ -60,6 +65,7 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
         this.config = config;
         this.myId = config.myId;
         const httpServer = http.createServer(requestListener);
+        this.httpServer = httpServer;
         this.io = IO(httpServer, {
             perMessageDeflate: false
         });

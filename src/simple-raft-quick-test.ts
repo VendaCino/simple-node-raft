@@ -14,7 +14,6 @@ class SlowRaftServer extends RaftServer {
 function makeNode(id: number): RaftNode {
     return {
         address: "http://localhost", id: id, port: 10000 + id
-
     }
 }
 
@@ -29,8 +28,8 @@ function makeConfig(id: number): RaftConfig {
 const ss: Array<RaftServer> = [new SlowRaftServer(new RaftRpcSocketIo(makeConfig(1)), makeConfig(1)),
     new SlowRaftServer(new RaftRpcSocketIo(makeConfig(2)), makeConfig(2)),
     new SlowRaftServer(new RaftRpcSocketIo(makeConfig(3)), makeConfig(3)),
-    // new RaftServer(new RaftRpcSocketIo(makeConfig(4)), makeConfig(4)),
-    // new RaftServer(new RaftRpcSocketIo(makeConfig(5)), makeConfig(5)),
+    // new SlowRaftServer(new RaftRpcSocketIo(makeConfig(4)), makeConfig(4)),
+    // new SlowRaftServer(new RaftRpcSocketIo(makeConfig(5)), makeConfig(5)),
 ]
 
 ss.forEach(s => s.start());

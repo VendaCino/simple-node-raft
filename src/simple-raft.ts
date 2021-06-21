@@ -110,7 +110,7 @@ export class RaftServer {
     //----Private State------
     otherNode: Array<RaftNode> = [];
     role: RaftRole = RaftRole.Follower;
-    _timestampOfLeaderHeart = this.now();
+    _timestampOfLeaderHeart = this.now() - this.randOf(5);
     _timestampOfBecomeCandidate = this.now();
     _timestampOfLeaderHeartLastSend = this.now();
     //----Config And Other----
@@ -224,25 +224,25 @@ abstract class BaseRoleBehavior {
     public abstract loop(): void;
 
     onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode): void {
-        this.updateTerm(req);
+        this.updateTerm(req, from, "reqVote");
     }
 
     onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode): void {
-        this.updateTerm(res);
+        this.updateTerm(res, from, "resVote");
     }
 
     onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode): void {
-        this.updateTerm(req);
+        this.updateTerm(req, from, "reqLog");
     }
 
     onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode): void {
-        this.updateTerm(res);
+        this.updateTerm(res, from, "resLog");
     }
 
-    private updateTerm(data: RaftRequest) {
+    private updateTerm(data: RaftRequest, from: RaftNode, tag?: string) {
         let _this = this._this;
         if (data.term > _this.currentTerm) {
-            _this.logMe("my term < " + data.term + " I gonna be Follower");
+            _this.logMe("my term < " + data.term + " I gonna be Follower. " + `from:${from.id} tag:${tag}`);
             _this.votedFor = -1;
             _this.currentTerm = data.term;
             _this.becomeFollower();
@@ -273,7 +273,7 @@ class FollowerBehavior extends BaseRoleBehavior {
     onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
         super.onRpcRequestVoteRequest(req, from);
         let _this = this._this;
-        _this.logMe("recv RequestVote From server:" + from.id);
+        _this.logMe("recv RequestVote From server:" + from.id + `\x1b[30;30m data:${JSON.stringify(req)}\x1b[0m`);
         if (_this.role === RaftRole.Follower) {
             if (_this.votedFor === -1
                 && _this.currentTerm <= req.term
@@ -314,6 +314,7 @@ class CandidateBehavior extends BaseRoleBehavior {
         let _this = this._this;
         if (_this.role !== RaftRole.Candidate) return
         if (res.voteGranted) {
+            _this.logMe("I Get Vote from :" + from.id);
             _this.whoVotedMe.add(from.id);
             if (_this.whoVotedMe.size >= _this.otherNode.length / 2) {
                 _this.logMe("I Get Enough Vote :" + [..._this.whoVotedMe.values()]);
