@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="utf-8">
+    <title>Simple Raft Test</title>
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+    <style>
+        .item {
+            position: absolute;
+        }
+
+        .item-node {
+            position: absolute;
+            width: 200px;
+            height: 200px;
+        }
+
+        .img {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            z-index: -1;
+        }
+
+        .text {
+            position: absolute;
+            height: 100px;
+            top: -20px;
+            left: 0;
+            right: 0;
+            z-index: 1;
+        }
+
+        .text-debug-log {
+            position: absolute;
+            height: 100px;
+            width: 200px;
+            top: 20px;
+            left: 100px;
+            right: 0;
+            font-size: 12px;
+            z-index: 1;
+        }
+
+        .item-btn {
+            position: absolute;
+            top: 70px;
+            left: 120px;
+            z-index: 2;
+        }
+
+        .text-log {
+            position: absolute;
+            width: 200px;
+            top: 110px;
+            left: 1px;
+            right: 0;
+            font-size: 12px;
+            z-index: 1;
+            display: inline-flex;
+        }
+
+        .log-item {
+            width: 30px;
+            height: 36px;
+            text-align: center;
+            font-size: 12px;
+            border: 1px solid black;
+        }
+
+        .log-detail {
+            position: relative;
+            width: 30px;
+        }
+    </style>
+</head>
+<body>
+<div id="app" style="width: 400px;height: 400px">
+    <button onclick="hello()">hello</button>
+    <button onclick=" socket.emit('reset',)">reset</button>
+    <button onclick="socket.emit('submitLog',app.submitData);app.submitData=randLog()">submit log</button>
+    <label> <input v-model="submitData"/> </label>
+    <raft-node v-for="(n,i) in ss" :n="n" :dlog="lastDebugLog[n.id]" :key="i" :flag="flag"></raft-node>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/2.3.0/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+<script>
+    var socket = io();
+
+    function hello() {
+        socket.emit("hello", "world");
+    }
+
+    socket.emit("updateAllStatus");
+
+    const posL = [0, 10, 10, 400, 400, 200].map(e => e + 50);
+    const posT = [0, 10, 200, 200, 10, -160].map(e => e + 210);
+    const roleName = ["Follower", "Candidate", "Leader"];
+    const imgLeader = "http://img.doutula.com/production/uploads/image/2016/06/05/20160605109705_ZXfEte.jpg";
+    const imgFollower = "http://img.doutula.com/production/uploads/image/2016/01/19/20160119162922_pairGs.jpg";
+    const imgCandidate = "http://img.doutula.com/production/uploads/image/2016/01/19/20160119162924_FQbDjV.jpg";
+    const imgServerStop = "http://img.doutula.com/production/uploads/image/2015/12/30/20151230484912_YqnIZt.jpg";
+    const logs = ["x=1", "x++", "y=1", "x--", "y--", "y++"]
+
+    function randLog() {
+        let string = logs[Math.ceil(Math.random() * 100) % logs.length];
+        console.log(string)
+        return string;
+    }
+
+    Vue.prototype.LogColors = ["#4ee7e7", "#5dc441", "#c47541", "#c44160"];
+    Vue.prototype.socket = socket;
+    Vue.component('raft-node', {
+        props: ['n', 'dlog'],
+        template: `
+          <div class="item-node"
+               :style="{left:n.posL, top:n.posT , }">
+          <img class="img" :src="n.img" :alt="n.roleName"/>
+          <div class="text">{{ "id:" + n.id + " " + n.roleName + " term:" + n.term }}</div>
+          <div class="text-debug-log">{{ dlog }}</div>
+          <button v-if="n.end" class="item-btn" @click="socket.emit('start',n.id)" style="color: red"> pausing</button>
+          <button v-if="!n.end" class="item-btn" @click="socket.emit('stop',n.id)" style="color: green">running</button>
+          <div class="text-log">
+            <div class="log-item">
+              <div class="log-detail" style="top:-15px;right: 0;left: 0">index</div>
+              <div class="log-detail" style="top:-15px;font-size: 12px">term</div>
+              <div class="log-detail" style="top:-15px">log</div>
+            </div>
+            <div v-for="(l,i) in n.log" :key="i" :style="{background: LogColors[l.term%LogColors.length]}"
+                 class="log-item">
+              <div class="log-detail" style="top:-15px;right: 0;left: 0">{{ l.index }}</div>
+              <div class="log-detail" style="top:-15px;font-size: 12px">{{ l.term }}</div>
+              <div class="log-detail" style="top:-15px">{{ l.key }}</div>
+              <div v-if="l.index === n.commit" class="log-detail" style="top:-15px">↑</div>
+            </div>
+          </div>
+          </div>`
+    })
+    var app = new Vue({
+        el: '#app',
+        data: {
+            message: 'Hello Vue!',
+            ss: [],
+            lastDebugLog: {},
+            flag: true,
+            submitData: "x=1",
+            // socket: socket,
+        },
+    });
+    socket.on("hello", (data) => {
+        alert(data + " (socket.io is connected)");
+    })
+    socket.on("debugLog", (data) => {
+        let msg;
+        msg = data.msg;
+        let specialIndex = msg.indexOf("\x1b[30;30m");
+        if (specialIndex !== -1) {
+            msg = msg.substring(0, specialIndex);
+        }
+        console.log(`[server ${data.id}]:`, msg);
+        app.lastDebugLog[data.id] = msg;
+        app.flag = !app.flag;
+    })
+    socket.on("updateAllStatus", (data) => {
+        data.forEach(e => e.posL = posL[e.id] + "px");
+        data.forEach(e => e.posT = posT[e.id] + "px");
+        data.forEach(e => e.roleName = roleName[e.role]);
+        data.forEach(e => {
+            if (e.role === 0) e.img = imgFollower;
+            if (e.role === 1) e.img = imgCandidate;
+            if (e.role === 2) e.img = imgLeader;
+            if (e.end) e.img = imgServerStop;
+        });
+        app.ss = data;
+    })
+</script>
+</body>
+</html>
+
