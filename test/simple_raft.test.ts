@@ -41,18 +41,14 @@ function makeConfig(id: number): RaftConfig {
     }
 }
 
-const ss: Array<RaftServer> = [new TestRaftServer(new RaftRpcSocketIo(makeConfig(1)), makeConfig(1)),
-    new TestRaftServer(new RaftRpcSocketIo(makeConfig(2)), makeConfig(2)),
-    new TestRaftServer(new RaftRpcSocketIo(makeConfig(3)), makeConfig(3)),
-    // new SlowRaftServer(new RaftRpcSocketIo(makeConfig(4)), makeConfig(4)),
-    // new SlowRaftServer(new RaftRpcSocketIo(makeConfig(5)), makeConfig(5)),
-]
+const ss: Array<RaftServer> = [];
+nodes.forEach(e => ss.push(new TestRaftServer(new RaftRpcSocketIo(makeConfig(e.id)), makeConfig(e.id))));
 
 @suite
 class SimpleRaftTest {
 
     static before(done) {
-        stopTimer = true;
+        stopTimer = false;
         console.log("before")
         ss.forEach(s => s.start());
         setTimeout(() => done(), 500);
@@ -66,8 +62,6 @@ class SimpleRaftTest {
 
     @test
     async 'Server Has One Leader'() {
-        assert.equal(ss.filter(e => e.role === RaftRole.Leader).length, 0)
-        stopTimer = false;
         await sleep(1000);
         assert.equal(ss.filter(e => e.role === RaftRole.Leader).length, 1)
     }
@@ -86,6 +80,15 @@ class SimpleRaftTest {
         assert.equal(ss.filter(e => e.role === RaftRole.Leader).length, 2)
         lastLeader.start();
         await sleep(200);
+    }
+
+    @test
+    async 'Client Add Log'() {
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        let result = await leader.submitLog("key", {});
+        let leaderLog = leader.lastLog;
+        assert.isTrue(result);
+        ss.forEach(e => assert.deepEqual(e.lastLog, leaderLog));
     }
 
 }
