@@ -108,10 +108,14 @@ type _RoleMap<T> = {
 };
 
 export interface RaftPersistence {
-    currentTerm: number;
-    votedFor: number;
+    readonly currentTerm: number;
+    readonly votedFor: number;
     readonly log: Array<RaftLog>;
     readonly lastLog: RaftLog;
+
+    setCurrentTerm(value: number): Promise<void>;
+
+    setVoteFor(value: number): Promise<void>;
 
     getLog(index: number, term?: number): RaftLog | null;
 
@@ -120,6 +124,8 @@ export interface RaftPersistence {
     remove(startIndex: number): Promise<void>;
 
     getEntries(startIndex: number, endIndex?: number): Array<RaftLog>;
+
+    removeSnapchatIndex(noNeedIndex: number): void;
 }
 
 export class RaftServer {
@@ -178,7 +184,7 @@ export class RaftServer {
     }
 
     set votedFor(value: number) {
-        this.persis.votedFor = value;
+        this.persis.setVoteFor(value);
     }
 
     get currentTerm() {
@@ -186,7 +192,7 @@ export class RaftServer {
     }
 
     set currentTerm(value: number) {
-        this.persis.currentTerm = value;
+        this.persis.setCurrentTerm(value)
     }
 
     //---persis properties end---
@@ -197,7 +203,7 @@ export class RaftServer {
     }
 
     start() {
-        this.becomeFollower();
+        // this.becomeFollower();
         this._end = false;
         this.raftRpc.start().then(
             () => {
@@ -212,9 +218,9 @@ export class RaftServer {
         );
     }
 
-    end() {
+    async end() {
         this.clearAllUnResolve();
-        this.raftRpc.end();
+        await this.raftRpc.end();
         if (this._interval) clearInterval(this._interval)
         this._end = true;
     }
@@ -253,25 +259,26 @@ export class RaftServer {
         }
     }
 
-    private onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
+    protected onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
         this.roleCheckLoop(() => this.nowBehavior.onRpcRequestVoteRequest(req, from));
     }
 
-    private onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode) {
+    protected onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode) {
         this.roleCheckLoop(() => this.nowBehavior.onRpcRequestVoteResponse(res, from));
     }
 
-    private onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
+    protected onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
         this.roleCheckLoop(() => this.nowBehavior.onRpcAppendEntriesRequest(req, from));
     }
 
-    private onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode) {
+    protected onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode) {
         this.roleCheckLoop(() => this.nowBehavior.onRpcAppendEntriesResponse(res, from));
     }
 
     becomeFollower() {
         this.role = RaftRole.Follower;
         this._timestampOfLeaderHeart = this.now() + this.randOf(this.config.timerConfig.timeoutOfNoLeaderHeart);
+        this.clearAllUnResolve();
     }
 
     becomeCandidate() {
@@ -424,18 +431,26 @@ class FollowerBehavior extends BaseRoleBehavior {
             }
             return;
         } else {
-            _this.logMe(`I add new log ` + `\x1b[30;30m entries:${JSON.stringify(req.entries)}\x1b[0m`);
-            _this.persis.push(req.entries).then(() => {
-                this.onProcessingAppendEntriesRequest = false;
-                if (req.leaderCommitIndex > _this.commitIndex) {
-                    _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
-                }
-                _this.raftRpc.rpcRtnAppendEntries(from, {
-                    matchIndex: _this.lastLog.index,
-                    success: true,
-                    term: _this.currentTerm
-                });
-            })
+            let writeLog = () => {
+                _this.logMe(`I add new log ` + `\x1b[30;30m entries:${JSON.stringify(req.entries)}\x1b[0m`);
+                _this.persis.push(req.entries).then(() => {
+                    this.onProcessingAppendEntriesRequest = false;
+                    if (req.leaderCommitIndex > _this.commitIndex) {
+                        _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
+                    }
+                    _this.raftRpc.rpcRtnAppendEntries(from, {
+                        matchIndex: _this.lastLog.index,
+                        success: true,
+                        term: _this.currentTerm
+                    });
+                })
+            }
+            if (_this.lastLog.index > matchLogs.index) {
+                _this.logMe(`I clear my old log ${matchLogs.index + 1}`);
+                _this.persis.remove(matchLogs.index + 1).then(() => writeLog());
+            } else {
+                writeLog();
+            }
         }
 
     }

@@ -135,7 +135,7 @@ class SimpleRaftTest {
         leader.start();
     }
 
-    @timeout(5000)
+    @timeout(50000)
     @test
     async 'Client Add Log 4'() {
         await sleep(500);
@@ -152,7 +152,9 @@ class SimpleRaftTest {
         assert.isTrue(await result2);
         assert.isFalse(await result3);
         assert.isTrue(await result4);
+        console.log("??????")
         assert.isFalse(await result5);
+        console.log("!!!!!!")
         let leaderLog = leader2.lastLog;
         console.log(leaderLog);
         ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
@@ -179,4 +181,3 @@ class SimpleRaftTest {
     }
 
 }
-

@@ -5,6 +5,14 @@ export class InMemRaftPersistence implements RaftPersistence {
     log: Array<RaftLog> = [zeroLog];
     votedFor: number = -1;
 
+    async setCurrentTerm(value: number): Promise<void> {
+        this.currentTerm = value;
+    }
+
+    async setVoteFor(value: number): Promise<void> {
+        this.votedFor = value;
+    }
+
     get lastLog(): RaftLog {
         return this.log.length > 0 ? this.log[this.log.length - 1] : zeroLog;
     }
@@ -33,5 +41,8 @@ export class InMemRaftPersistence implements RaftPersistence {
         this.log = this.log.slice(0, startIndex);
     }
 
-}
+    removeSnapchatIndex(noNeedIndex: number): void {
+        this.log = this.log.slice(noNeedIndex);
+    }
 
+}
