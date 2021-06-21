@@ -1,0 +1,75 @@
+{
+  "name": "simple-node-raft",
+  "version": "0.1.0",
+  "description": "A collection util can process list by some operation like flatMap distinct shuffle and reduce. Taking inspiration from java stream",
+  "homepage": "https://github.com/VendaCino/simple-node-raft",
+  "author": "venda",
+  "main": "dist/simple-node-raft.js",
+  "umd:main": "dist/umd/simple-node-raft.js",
+  "typings": "dist/simple-node-raft.d.ts",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "keywords": [
+    "functional",
+    "collection",
+    "pipeline",
+    "stream",
+    "lazy",
+    "utils",
+    "java",
+    "array"
+  ],
+  "scripts": {
+    "clean": "rimraf dist",
+    "lint": "node_modules/.bin/tslint -c tslint.json 'src/**/*.ts' 'test/**/*.ts'",
+    "compile": "tsc",
+    "test": "nyc ./node_modules/.bin/_mocha 'test/**/*.ts' --require ./register.js",
+    "bundle": "webpack --mode production && size-limit",
+    "build": "yarn clean && yarn lint && yarn compile && yarn test && yarn bundle"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/VendaCino/simple-node-raft.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VendaCino/simple-node-raft/issues"
+  },
+  "dependencies": {
+    "socket.io": "~2.3.0",
+    "socket.io-client": "^2.0.0"
+  },
+  "devDependencies": {
+    "@testdeck/mocha": "^0.1.2",
+    "@types/amqplib": "^0.5.17",
+    "@types/chai": "^4.2.16",
+    "@types/node": "^15.0.2",
+    "@types/socket.io": "^2.1.13",
+    "@types/socket.io-client": "^1.4.36",
+    "awesome-typescript-loader": "^5.2.0",
+    "chai": "^4.3.4",
+    "eslint": "1.10.2",
+    "mocha": "^8.3.2",
+    "nyc": "^15.1.0",
+    "rimraf": "^2.6.2",
+    "size-limit": "^0.19.0",
+    "ts-node": "^9.1.1",
+    "tsconfig-paths": "^3.9.0",
+    "tslint": "^6.1.3",
+    "typescript": "^4.2.3",
+    "uglifyjs-webpack-plugin": "^2.2.0",
+    "webpack": "^4.16.3",
+    "webpack-cli": "^3.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=6.0.0"
+  },
+  "size-limit": [
+    {
+      "path": "dist/umd/simple-node-raft.min.js",
+      "limit": "16 KB"
+    }
+  ]
+}

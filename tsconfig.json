@@ -1,0 +1,29 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es5",
+        "strict": true,
+        "moduleResolution": "node",
+        "emitDecoratorMetadata": true,
+        "experimentalDecorators": true,
+        "jsx": "react",
+        "allowSyntheticDefaultImports": true,
+        "esModuleInterop": true,
+        "lib": [
+            "es2015"
+        ],
+        "resolveJsonModule": true,
+        "outDir": "dist",
+        "sourceMap": true,
+        "declaration": true
+    },
+    "exclude": [
+        "node_modules",
+        "test",
+        "example",
+        "dist"
+    ],
+    "include": [
+        "./src/**/*.ts"
+    ]
+}
