@@ -1,3 +1,5 @@
+import {InMemRaftPersistence} from "./simple-raft-persistence";
+
 export enum RaftRole {
     Follower, Candidate, Leader
 }
@@ -34,6 +36,10 @@ export interface RaftLog {
     term: number;
     key: string;
     data: Object;
+}
+
+export const zeroLog: RaftLog = {
+    data: {}, index: 0, key: "", term: 0
 }
 
 interface RaftRequest {
@@ -97,15 +103,27 @@ type _RoleMap<T> = {
     [index in RaftRole]: T;
 };
 
-declare interface _NumberMap<T> {
-    [index: number]: T;
+export interface RaftPersistence {
+    currentTerm: number;
+    votedFor: number;
+    readonly log: Array<RaftLog>;
+    readonly lastLog: RaftLog;
+
+    getLog(index: number, term?: number): RaftLog | null;
+
+    push(log: RaftLog): boolean;
+
+    remove(startIndex: number): void;
+
+    getEntries(startIndex: number, endIndex?: number): Array<RaftLog>;
 }
 
 export class RaftServer {
     //----Persistent State----
-    currentTerm: number = 0;
-    votedFor: number = -1;
-    log: Array<RaftLog> = [];
+    // currentTerm: number = 0;
+    // votedFor: number = -1;
+    // log: Array<RaftLog> = [];
+    persis: RaftPersistence;
     //----Volatile State----
     commitIndex = 0;
     lastApplied = 0;
@@ -129,7 +147,8 @@ export class RaftServer {
 
     roleBehaviors: _RoleMap<BaseRoleBehavior>;
 
-    constructor(raftRpc: RaftRpc, config: RaftConfig) {
+    constructor(raftRpc: RaftRpc, config: RaftConfig, raftPersistence?: RaftPersistence) {
+        this.persis = raftPersistence ?? new InMemRaftPersistence();
         this.raftRpc = raftRpc;
         this.config = config;
         this.myId = this.config.myId;
@@ -145,6 +164,26 @@ export class RaftServer {
             "2": new LeaderBehavior(this)
         }
     }
+
+    //---persis properties---
+    get votedFor() {
+        return this.persis.votedFor;
+    }
+
+    set votedFor(value: number) {
+        this.persis.votedFor = value;
+    }
+
+    get currentTerm() {
+        return this.persis.currentTerm;
+    }
+
+    set currentTerm(value: number) {
+        this.persis.currentTerm = value;
+    }
+
+    //---persis properties end---
+
 
     now(): number {
         return Date.now();
@@ -162,21 +201,12 @@ export class RaftServer {
         if (this._interval) clearInterval(this._interval)
     }
 
-
     loop() {
         this.nowBehavior.loop();
     }
 
-    get lastLogTerm() {
-        return this.lastLog?.term ?? 0;
-    }
-
-    get lastLogIndex() {
-        return this.lastLog?.index ?? 0;
-    }
-
-    get lastLog(): RaftLog | null {
-        return this.log.length > 0 ? this.log[this.log.length - 1] : null;
+    get lastLog(): RaftLog {
+        return this.persis.lastLog;
     }
 
     get nowBehavior(): BaseRoleBehavior {
@@ -233,7 +263,7 @@ export class RaftServer {
     becomeLeader() {
         this.role = RaftRole.Leader;
         this.nextIndex = new Map();
-        let index = this.lastLogIndex + 1;
+        let index = this.lastLog.index + 1;
         for (let node of this.otherNode) this.nextIndex.set(node.id, index);
         this.matchIndex = new Map();
         this.clearAllUnResolve();
@@ -242,8 +272,8 @@ export class RaftServer {
 
     async submitLog(key: string, data: Object): Promise<Boolean> {
         if (this.role === RaftRole.Leader) {
-            let index = this.lastLogIndex + 1;
-            this.log.push({data: data, index: index, key: key, term: this.currentTerm});
+            let index = this.lastLog.index + 1;
+            this.persis.push({data: data, index: index, key: key, term: this.currentTerm});
             return new Promise((resolve => this.logIndexResolve.set(index, resolve)));
         } else return false;
     }
@@ -256,7 +286,8 @@ export class RaftServer {
     }
 
     async commit(index: number) {
-        let raftLog = this.log.filter(e => e.index === index)[0];
+        if (index === 0) return;
+        let raftLog = this.persis.getLog(index);
         this.logMe(`I commit a log index:${index} data: ${JSON.stringify(raftLog)}`);
         if (this.logIndexResolve.has(index)) this.logIndexResolve.get(index)!(true);
         return;
@@ -319,8 +350,8 @@ class FollowerBehavior extends BaseRoleBehavior {
             for (const node of _this.otherNode)
                 _this.raftRpc.rpcRequestVote(node, {
                     candidateId: _this.myId,
-                    lastLogIndex: _this.lastLogIndex,
-                    lastLogTerm: _this.lastLogTerm,
+                    lastLogIndex: _this.lastLog.index,
+                    lastLogTerm: _this.lastLog.term,
                     term: _this.currentTerm
                 })
         }
@@ -333,8 +364,8 @@ class FollowerBehavior extends BaseRoleBehavior {
         if (_this.role === RaftRole.Follower) {
             if (_this.votedFor === -1
                 && _this.currentTerm <= req.term
-                && _this.lastLogIndex <= req.lastLogIndex
-                && _this.lastLogTerm <= req.lastLogTerm) {
+                && _this.lastLog.index <= req.lastLogIndex
+                && _this.lastLog.term <= req.lastLogTerm) {
                 _this.votedFor = from.id;
                 _this.raftRpc.rpcRtnRequestVote(from, {voteGranted: true, term: _this.currentTerm})
             } else {
@@ -354,25 +385,25 @@ class FollowerBehavior extends BaseRoleBehavior {
         _this._timestampOfLeaderHeart = _this.now();
         if (req.entries.length === 0) return;
 
-        let matchLogs = _this.log.filter(e => e.index === req.prevLogIndex && e.term === req.term);
-        if (matchLogs.length === 0 && _this.log.length > 0) {
+        let matchLogs = _this.persis.getLog(req.prevLogIndex, req.term);
+        if (matchLogs === null) {
             _this.logMe(`I get Log bug but no match ` + `\x1b[30;30m data:${JSON.stringify(req)}\x1b[0m`);
             _this.raftRpc.rpcRtnAppendEntries(from, {matchIndex: 0, success: false, term: _this.currentTerm});
-            let indexSameLogs = _this.log.filter(e => e.index === req.prevLogIndex);
-            if (indexSameLogs.length > 0) {
-                _this.logMe(`I clear my old log`);
-                _this.log = _this.log.filter(e => e.index < req.prevLogIndex);
+            let indexSameLogs = _this.persis.getLog(req.prevLogIndex);
+            if (indexSameLogs != null) {
+                _this.logMe(`I clear my old log ${indexSameLogs.index}`);
+                _this.persis.remove(indexSameLogs.index)
             }
             return;
         } else {
             _this.logMe(`I add new log ` + `\x1b[30;30m entries:${JSON.stringify(req.entries)}\x1b[0m`);
-            req.entries.forEach(e => _this.log.push(e));
+            req.entries.forEach(e => _this.persis.push(e));
             if (req.leaderCommitIndex > _this.commitIndex) {
-                _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLogIndex);
+                _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
             }
         }
         _this.raftRpc.rpcRtnAppendEntries(from, {
-            matchIndex: _this.lastLogIndex,
+            matchIndex: _this.lastLog.index,
             success: true,
             term: _this.currentTerm
         });
@@ -423,17 +454,17 @@ class LeaderBehavior extends BaseRoleBehavior {
         if (_this.now() - _this._timestampOfLeaderHeartLastSend > timerConfig.coldTimeOfLeaderHeart) {
             _this._timestampOfLeaderHeartLastSend = _this.now();
             for (let node of _this.otherNode) {
-                let prevIndex = _this.nextIndex.get(node.id) ?? 0;
-                let prevLog = _this.log.filter(e => e.index === prevIndex);
-                let entries = _this.log.filter(e => e.index >= prevIndex);
+                let prevIndex = (_this.nextIndex.get(node.id) ?? 1) - 1;
+                let prevLog = _this.persis.getLog(prevIndex)!;
+                let entries = _this.persis.getEntries(prevIndex + 1);
                 if (entries.length > 0)
-                    _this.logMe(`I send log to ${node.id} logLength:${entries.length} prev:${prevLog.length === 0 ? 0 : prevLog[0].index}`);
+                    _this.logMe(`I send log to ${node.id} logLength:${entries.length} prev:${JSON.stringify(prevLog)}`);
                 _this.raftRpc.rpcAppendEntries(node, {
                     entries: entries,
                     leaderCommitIndex: _this.commitIndex,
                     leaderId: _this.myId,
-                    prevLogIndex: prevLog.length === 0 ? 0 : prevLog[0].index,
-                    prevLogTerm: prevLog.length === 0 ? 0 : prevLog[0].term,
+                    prevLogIndex: prevLog.index,
+                    prevLogTerm: prevLog.term,
                     term: _this.currentTerm
                 });
             }
@@ -443,13 +474,13 @@ class LeaderBehavior extends BaseRoleBehavior {
         let count = 0;
         let min = -1;
         for (const value of _this.matchIndex.values()) {
-            if (value > _this.commitIndex && _this.log) {
+            if (value > _this.commitIndex) {
                 count++;
                 min = Math.min(value, min === -1 ? value : min);
             }
         }
         if (count >= _this.otherNode.length / 2) {
-            if (_this.log.filter(e => e.index === min && e.term === _this.currentTerm).length > 0) {
+            if (_this.persis.getLog(min, _this.currentTerm) !== null) {
                 _this.commitIndex = min
             } else {
                 _this.commitIndex = min;
