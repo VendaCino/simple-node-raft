@@ -291,7 +291,7 @@ class FollowerBehavior extends BaseRoleBehavior {
     onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
         super.onRpcAppendEntriesRequest(req, from);
         let _this = this._this;
-        if (req.entries.length == 0) {
+        if (req.entries.length === 0) {
             _this._timestampOfLeaderHeart = _this.now();
             _this.votedFor = -1;
         }
