@@ -35,8 +35,14 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
     private io: IO.Server | null = null;
     private cioMap: Map<number, SocketIOClient.Socket> = new Map();
     private raftNodeMap: Map<number, RaftNode> = new Map();
-    private config: RaftConfig | null = null;
+    private config: RaftConfig;
     private myId = -1;
+
+
+    constructor(config: RaftConfig) {
+        super();
+        this.config = config;
+    }
 
     private get me() {
         return `[server:${this.myId}]`;
@@ -48,7 +54,8 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
     }
 
 
-    start(config: RaftConfig): void {
+    start(): void {
+        const config: RaftConfig = this.config;
         if (this.started) return;
         this.config = config;
         this.myId = config.myId;
@@ -56,22 +63,25 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
         this.io = IO(httpServer, {
             perMessageDeflate: false
         });
+        for (const node of config.nodes) {
+            this.raftNodeMap.set(node.id, node);
+        }
         this.io.on('connection', socket => { /* ... */
             let ip = socket.handshake.headers['x-real-ip'] || socket.request.connection.remoteAddress;
-            let serverId = socket.handshake.headers['server-id'] || -1;
+            let serverId = parseInt(socket.handshake.headers['server-id'] || "-1");
             console.log(this.me, "connect >> " + serverId + " " + ip + ":" + socket.request.connection.remotePort);
             socket.on('hello', (name) => {
                 this.io?.to(socket.id).emit("hello", "hello " + name);
             })
-            this.initServerEvent(socket);
+            let node = this.raftNodeMap.get(serverId)!;
+            this.initServerEvent(socket, node);
         });
         for (const node of config.nodes) {
             if (node.id !== this.myId) {
                 let clientSocket = CIO.connect(`${node.address}:${node.port}`, clientOption(this.myId));
-                this.initClientEvent(clientSocket);
+                this.initClientEvent(clientSocket, node);
                 this.cioMap.set(node.id, clientSocket);
             }
-            this.raftNodeMap.set(node.id, node);
         }
         let myNode = this.raftNodeMap.get(config.myId);
         assert(myNode, `Start fail, ${config.myId} not in ${JSON.stringify(config.nodes)}`);
@@ -80,34 +90,47 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
 
     }
 
-    private initClientEvent(socket: SocketIOClient.Socket) {
-        socket.on(RaftConstant.eventAppendRes, (arg: AppendEntriesResponse) => {
-            this.emit(RaftConstant.eventAppendRes, arg);
-        });
-        socket.on(RaftConstant.eventVoteRes, (arg: RequestVoteResponse) => {
-            this.emit(RaftConstant.eventVoteRes, arg);
-        });
+    private initClientEvent(socket: SocketIOClient.Socket, node: RaftNode) {
+
     }
 
-    private initServerEvent(socket: IO.Socket) {
+    private initServerEvent(socket: IO.Socket, node: RaftNode) {
         socket.on(RaftConstant.eventAppendReq, (arg: AppendEntriesRequest) => {
-            this.emit(RaftConstant.eventAppendReq, arg);
+            this.emit(RaftConstant.eventAppendReq, arg, node);
         });
         socket.on(RaftConstant.eventVoteReq, (arg: RequestVoteRequest) => {
-            this.emit(RaftConstant.eventVoteReq, arg);
+            this.emit(RaftConstant.eventVoteReq, arg, node);
+        });
+        socket.on(RaftConstant.eventAppendRes, (arg: AppendEntriesResponse) => {
+            this.emit(RaftConstant.eventAppendRes, arg, node);
+        });
+        socket.on(RaftConstant.eventVoteRes, (arg: RequestVoteResponse) => {
+            this.emit(RaftConstant.eventVoteRes, arg, node);
         });
     }
 
-    rpcAppendEntries(to: RaftNode, data: AppendEntriesRequest): void {
+    rpcAppendEntries(to: RaftNode, data?: AppendEntriesRequest): void {
         let target = this.cioMap.get(to.id);
-        assert(target, `rpcAppendEntries fail, ${to.id} not in ${JSON.stringify(this.config?.nodes)}`);
+        assert(target, `rpcAppendEntries fail, ${to.id} not in ${JSON.stringify(this.config.nodes)}`);
         target.emit(RaftConstant.eventAppendReq, data);
     }
 
     rpcRequestVote(to: RaftNode, data: RequestVoteRequest): void {
         let target = this.cioMap.get(to.id);
-        assert(target, `rpcRequestVote fail, ${to.id} not in ${JSON.stringify(this.config?.nodes)}`);
+        assert(target, `rpcRequestVote fail, ${to.id} not in ${JSON.stringify(this.config.nodes)}`);
         target.emit(RaftConstant.eventVoteReq, data);
+    }
+
+    rpcRtnRequestVote(to: RaftNode, data: RequestVoteResponse): void {
+        let target = this.cioMap.get(to.id);
+        assert(target, `rpcRtnRequestVote fail, ${to.id} not in ${JSON.stringify(this.config.nodes)}`);
+        target.emit(RaftConstant.eventVoteRes, data);
+    }
+
+    rpcRtnAppendEntries(to: RaftNode, data: AppendEntriesResponse): void {
+        let target = this.cioMap.get(to.id);
+        assert(target, `rpcRtnAppendEntries fail, ${to.id} not in ${JSON.stringify(this.config.nodes)}`);
+        target.emit(RaftConstant.eventAppendRes, data);
     }
 
 }
