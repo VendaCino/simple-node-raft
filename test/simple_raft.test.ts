@@ -102,6 +102,7 @@ class SimpleRaftTest {
         let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
         let result2 = leader.submitLog("key2", {});
         let result3 = leader.submitLog("key3", {});
+        // noinspection JSUnusedLocalSymbols
         let result4 = leader.submitLog("key4", {});
         assert.isTrue(await result2);
         assert.isTrue(await result3);
@@ -178,6 +179,50 @@ class SimpleRaftTest {
         let leaderLogLength = leader.persis.log.length;
         console.log(leaderLogLength);
         ss.forEach(e => assert.equal(leaderLogLength, e.persis.log.length));
+    }
+
+
+    @timeout(5000)
+    @test
+    async 'Client Add Log and remove  '() {
+        await sleep(500);
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        let result2 = leader.submitLog("key2", {});
+        await sleep(1500);
+        let result3 = leader.submitLog("key3", {});
+        //leader1 dead
+        leader.end();
+        await sleep(500);
+        //found leader2
+        let leader2 = ss.filter(e => e.role === RaftRole.Leader && e !== leader)[0];
+        let result4 = leader2.submitLog("key4", {});
+        assert.isTrue(await result2);
+        assert.isFalse(await result3);
+        assert.isTrue(await result4);
+        //all dead
+        ss.filter(e => e !== leader).forEach(e => e.end());
+        await sleep(500);
+        //leader1 alive
+        leader.start();
+        //this two log should not commit
+        let result5 = leader.submitLog("key4", {});
+        let result6 = leader.submitLog("key5", {});
+        await sleep(500);
+        //all alive
+        ss.filter(e => e !== leader).forEach(e => e.start());
+        assert.isFalse(await result5);
+        assert.isFalse(await result6);
+        let leader3 = ss.filter(e => e.role === RaftRole.Leader && e !== leader)[0];
+        console.log("!!!!!!")
+        //leader 1 may need long time
+        await sleep(1000);
+        let leader3Log = leader3.lastLog;
+        let leader1Log = leader.lastLog;
+        ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
+        let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leader3Log)).length;
+        assert.isTrue(sameLogLength > nodes.length / 2);
+        assert.equal(JSON.stringify(leader1Log), JSON.stringify(leader3Log));
+        ss.forEach(e => assert.equal(leader3.commitIndex, e.commitIndex));
     }
 
 }

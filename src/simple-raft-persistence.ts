@@ -21,8 +21,13 @@ export class InMemRaftPersistence implements RaftPersistence {
         return this.log.slice(startIndex, endIndex);
     }
 
-    getLog(index: number, term?: number): RaftLog {
-        return this.log[index];
+    getLog(index: number, term?: number): RaftLog | null {
+        if (term === undefined || term === null) return this.log[index];
+        else {
+            let raftLog = this.log[index];
+            if (raftLog?.term === term) return raftLog;
+            else return null;
+        }
     }
 
     async push(logs: RaftLog[]): Promise<boolean> {
