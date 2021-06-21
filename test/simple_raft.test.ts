@@ -141,7 +141,7 @@ class SimpleRaftTest {
         await sleep(500);
         let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
         let result2 = leader.submitLog("key2", {});
-        await sleep(500);
+        await sleep(1500);
         let result3 = leader.submitLog("key3", {});
         leader.end();
         await sleep(500);
@@ -179,3 +179,4 @@ class SimpleRaftTest {
     }
 
 }
+

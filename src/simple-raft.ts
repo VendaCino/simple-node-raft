@@ -15,13 +15,15 @@ export interface RaftTimerConfig {
     timeoutOfNoLeaderHeart: number;
     timeoutOfNoLeaderElected: number;
     coldTimeOfLeaderHeart: number;
+    coldTimeOfLeaderUpdateLog: number;
 }
 
 export function makeDefaultRaftTimerConfig(rtt: number): RaftTimerConfig {
     return {
         coldTimeOfLeaderHeart: 2 * rtt,
         timeoutOfNoLeaderHeart: 5 * rtt,
-        timeoutOfNoLeaderElected: 10 * rtt
+        timeoutOfNoLeaderElected: 10 * rtt,
+        coldTimeOfLeaderUpdateLog: 5 * rtt
     }
 }
 
@@ -76,7 +78,7 @@ export interface RaftNode {
 }
 
 export interface RaftRpc {
-    start(): void;
+    start(): Promise<void>;
 
     rpcRequestVote(to: RaftNode, data: RequestVoteRequest): void;
 
@@ -86,7 +88,9 @@ export interface RaftRpc {
 
     rpcRtnAppendEntries(to: RaftNode, data: AppendEntriesResponse): void;
 
-    end(): void;
+    rpcSendHeartToAll(data: AppendEntriesRequest): void;
+
+    end(): Promise<void>;
 }
 
 export declare interface RaftRpc {
@@ -139,6 +143,7 @@ export class RaftServer {
     _timestampOfLeaderHeart = this.now() - this.randOf(5);
     _timestampOfBecomeCandidate = this.now();
     _timestampOfLeaderHeartLastSend = this.now();
+    _timestampOfLeaderUpdateLogLastSend = this.now();
     //----Config And Other----
     myId = -1;
     raftRpc: RaftRpc;
@@ -146,6 +151,8 @@ export class RaftServer {
     private _interval: NodeJS.Timeout | undefined;
 
     roleBehaviors: _RoleMap<BaseRoleBehavior>;
+
+    _end = false;
 
     constructor(raftRpc: RaftRpc, config: RaftConfig, raftPersistence?: RaftPersistence) {
         this.persis = raftPersistence ?? new InMemRaftPersistence();
@@ -191,14 +198,25 @@ export class RaftServer {
 
     start() {
         this.becomeFollower();
-        this.raftRpc.start();
-        this._interval = setInterval(() => this.loop(), 25);
+        this._end = false;
+        this.raftRpc.start().then(
+            () => {
+                this.logMe(` rpc start ok`)
+                if (!this._end) {
+                    if (this._interval) clearInterval(this._interval);
+                    let firstTimeout = this.config.timerConfig.timeoutOfNoLeaderHeart * 2;
+                    this._timestampOfLeaderHeart = this.now() + this.randOf(firstTimeout) + firstTimeout;
+                    this._interval = setInterval(() => this.loop(), 25);
+                }
+            }
+        );
     }
 
     end() {
         this.clearAllUnResolve();
         this.raftRpc.end();
         if (this._interval) clearInterval(this._interval)
+        this._end = true;
     }
 
     loop() {
@@ -214,9 +232,12 @@ export class RaftServer {
     }
 
     logMe(msg: string): void {
-        let date = new Date(Math.floor(this.now()));
-        let nowStr = date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds() + ":" + date.getMilliseconds();
-        console.log(`${nowStr}: \x1b[${41 + this.config.myId};30m[server:${this.config.myId} role:${RaftRole[this.role]} term:${this.currentTerm}]\x1b[0m:` + msg);
+        console.log(`${this.stamp2str(this.now())}: \x1b[${41 + this.config.myId};30m[server:${this.config.myId} role:${RaftRole[this.role]} term:${this.currentTerm}]\x1b[0m:` + msg);
+    }
+
+    stamp2str(time: number): string {
+        let date = new Date(Math.floor(time));
+        return date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds() + ":" + date.getMilliseconds();
     }
 
     private randOf(max: number) {
@@ -273,8 +294,10 @@ export class RaftServer {
     async submitLog(key: string, data: Object): Promise<Boolean> {
         if (this.role === RaftRole.Leader) {
             let index = this.lastLog.index + 1;
+            this.logMe(`I get Log of index:{${index} key:${key}  data:${JSON.stringify(data)}`);
             let rr: Promise<Boolean> = new Promise((resolve => this.logIndexResolve.set(index, resolve)));
             await this.persis.push([{data: data, index: index, key: key, term: this.currentTerm}]);
+            this._timestampOfLeaderUpdateLogLastSend = -1;
             return rr;
         } else return false;
     }
@@ -343,7 +366,7 @@ class FollowerBehavior extends BaseRoleBehavior {
         let _this = this._this;
         let timerConfig = _this.config.timerConfig;
         if (_this.now() - _this._timestampOfLeaderHeart > timerConfig.timeoutOfNoLeaderHeart) {
-            _this.logMe("No Leader I will be Candidate");
+            _this.logMe("No Leader I will be Candidate timestamp:" + _this.stamp2str(_this._timestampOfLeaderHeart));
             _this.becomeCandidate();
             _this.currentTerm++;
             _this.whoVotedMe.clear();
@@ -389,6 +412,7 @@ class FollowerBehavior extends BaseRoleBehavior {
 
         if (this.onProcessingAppendEntriesRequest) return;
         this.onProcessingAppendEntriesRequest = true;
+
         let matchLogs = _this.persis.getLog(req.prevLogIndex, req.term);
         if (matchLogs === null) {
             _this.logMe(`I get Log bug but no match ` + `\x1b[30;30m data:${JSON.stringify(req)}\x1b[0m`);
@@ -458,22 +482,28 @@ class LeaderBehavior extends BaseRoleBehavior {
         super.loop();
         let _this = this._this;
         let timerConfig = _this.config.timerConfig;
+        let req: AppendEntriesRequest = {
+            entries: [], leaderCommitIndex: _this.commitIndex, leaderId: _this.myId,
+            prevLogIndex: -1, prevLogTerm: -1, term: _this.currentTerm
+        };
         if (_this.now() - _this._timestampOfLeaderHeartLastSend > timerConfig.coldTimeOfLeaderHeart) {
             _this._timestampOfLeaderHeartLastSend = _this.now();
+            for (let node of _this.otherNode) _this.raftRpc.rpcAppendEntries(node, req);
+            _this.raftRpc.rpcSendHeartToAll(req)
+        }
+        if (_this.now() - _this._timestampOfLeaderUpdateLogLastSend > timerConfig.coldTimeOfLeaderUpdateLog) {
+            _this._timestampOfLeaderUpdateLogLastSend = _this.now();
             for (let node of _this.otherNode) {
                 let prevIndex = (_this.nextIndex.get(node.id) ?? 1) - 1;
                 let prevLog = _this.persis.getLog(prevIndex)!;
                 let entries = _this.persis.getEntries(prevIndex + 1);
                 if (entries.length > 0)
                     _this.logMe(`I send log to ${node.id} logLength:${entries.length} prev:${JSON.stringify(prevLog)}`);
-                _this.raftRpc.rpcAppendEntries(node, {
-                    entries: entries,
-                    leaderCommitIndex: _this.commitIndex,
-                    leaderId: _this.myId,
-                    prevLogIndex: prevLog.index,
-                    prevLogTerm: prevLog.term,
-                    term: _this.currentTerm
-                });
+                let reqWithLog = {...req};
+                reqWithLog.entries = entries;
+                reqWithLog.prevLogIndex = prevLog.index;
+                reqWithLog.prevLogTerm = prevLog.term;
+                _this.raftRpc.rpcAppendEntries(node, reqWithLog);
             }
         }
 

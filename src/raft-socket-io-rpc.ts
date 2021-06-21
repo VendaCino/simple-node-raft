@@ -49,7 +49,7 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
         return `[server:${this.myId}]`;
     }
 
-    end(): void {
+    async end(): Promise<void> {
         if (!this.started) return;
         this.io?.close(() => console.log(`${this.me}: rpc end ok`));
         this.httpServer?.close(() => console.log(`${this.me}: rpc server end ok`))
@@ -60,7 +60,7 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
     }
 
 
-    start(): void {
+    async start(): Promise<void> {
         const config: RaftConfig = this.config;
         if (this.started) return;
         this.config = config;
@@ -90,15 +90,18 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
                 this.cioMap.set(node.id, clientSocket);
             }
         }
-        let myNode = this.raftNodeMap.get(config.myId);
+        const myNode = this.raftNodeMap.get(config.myId);
         assert(myNode, `Start fail, ${config.myId} not in ${JSON.stringify(config.nodes)}`);
         this.started = true;
-        httpServer.listen(myNode.port, () => console.log(`${this.me}: rpc start ok`));
-
+        return new Promise<void>(resolve => {
+            httpServer.listen(myNode.port, () => resolve());
+        })
     }
 
     private initClientEvent(socket: SocketIOClient.Socket, node: RaftNode) {
-
+        socket.on(RaftConstant.eventAppendReq, (arg: AppendEntriesRequest) => {
+            this.emit(RaftConstant.eventAppendReq, arg, node);
+        });
     }
 
     private initServerEvent(socket: IO.Socket, node: RaftNode) {
@@ -138,6 +141,10 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
         let target = this.cioMap.get(to.id);
         assert(target, `rpcRtnAppendEntries fail, ${to.id} not in ${JSON.stringify(this.config.nodes)}`);
         target.emit(RaftConstant.eventAppendRes, data);
+    }
+
+    rpcSendHeartToAll(data: AppendEntriesRequest) {
+        this.io?.emit(RaftConstant.eventAppendReq, data);
     }
 
 }
