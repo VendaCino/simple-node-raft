@@ -84,6 +84,8 @@ class SimpleRaftTest {
         lastLeader.end();
         await sleep(1000);
         assert.equal(ss.filter(e => e.role === RaftRole.Leader).length, 2)
+        lastLeader.start();
+        await sleep(200);
     }
 
 }

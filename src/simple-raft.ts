@@ -145,6 +145,7 @@ export class RaftServer {
     start() {
         this.raftRpc.start();
         this._interval = setInterval(() => this.loop(), 25);
+        this.becomeFollower();
     }
 
     end() {

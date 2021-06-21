@@ -56,6 +56,7 @@ export default class RaftRpcSocketIo extends EventEmitter implements RaftRpc {
         for (let socket of this.cioMap.values()) {
             socket.close();
         }
+        this.started = false;
     }
 
 
