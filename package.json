@@ -27,7 +27,8 @@
     "compile": "tsc",
     "test": "nyc ./node_modules/.bin/_mocha 'test/**/*.ts' --require ./register.js",
     "bundle": "webpack --mode production && size-limit",
-    "build": "yarn clean && yarn lint && yarn compile && yarn test && yarn bundle"
+    "build": "yarn clean && yarn lint && yarn compile && yarn test && yarn bundle",
+    "example": "ts-node example/simple_raft_test.ts"
   },
   "repository": {
     "type": "git",

@@ -8,12 +8,12 @@ import {
     RaftTimerConfig,
     RequestVoteRequest,
     RequestVoteResponse
-} from "./simple-raft";
-import RaftRpcSocketIo from "./raft-socket-io-rpc";
+} from "../src/simple-raft";
+import RaftRpcSocketIo from "../src/raft-socket-io-rpc";
 import http, {IncomingMessage, ServerResponse} from "http";
 import IO from "socket.io";
 import * as fs from "fs";
-import {sleep} from "./async_utils";
+import {sleep} from "../src/async_utils";
 
 const httpServer = http.createServer(handleRequest);
 const io = IO(httpServer, {
