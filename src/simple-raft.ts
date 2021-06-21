@@ -415,7 +415,10 @@ class FollowerBehavior extends BaseRoleBehavior {
         }
         //heart ignore
         _this._timestampOfLeaderHeart = _this.now();
-        if (req.entries.length === 0) return;
+        if (req.entries.length === 0) {
+            _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
+            return;
+        }
 
         if (this.onProcessingAppendEntriesRequest) return;
         this.onProcessingAppendEntriesRequest = true;
