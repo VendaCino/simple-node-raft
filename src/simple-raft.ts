@@ -34,25 +34,25 @@ export interface RaftLog {
     term: number;
 }
 
-export interface RequestVoteResponse {
+interface RaftRequest {
     term: number;
-    success: boolean;
 }
 
-export interface AppendEntriesResponse {
-    term: number;
+export interface RequestVoteResponse extends RaftRequest {
     voteGranted: boolean;
 }
 
-export interface RequestVoteRequest {
-    term: number;
+export interface AppendEntriesResponse extends RaftRequest {
+    success: boolean;
+}
+
+export interface RequestVoteRequest extends RaftRequest {
     candidateId: number;
     lastLogIndex: number;
     lastLogTerm: number;
 }
 
-export interface AppendEntriesRequest {
-    term: number;
+export interface AppendEntriesRequest extends RaftRequest {
     leaderId: number;
     prevLogIndex: number;
     prevLogTerm: number;
@@ -90,6 +90,10 @@ export declare interface RaftRpc {
     on(event: 'onRpcAppendEntriesResponse', listener: (res: AppendEntriesResponse, from: RaftNode) => void): this;
 }
 
+type _Map<T> = {
+    [index in RaftRole]: T;
+};
+
 export class RaftServer {
     //----Persistent State----
     currentTerm: number = 0;
@@ -115,6 +119,8 @@ export class RaftServer {
     config: RaftConfig;
     private _interval: NodeJS.Timeout | undefined;
 
+    roleBehaviors: _Map<BaseRoleBehavior>;
+
     constructor(raftRpc: RaftRpc, config: RaftConfig) {
         this.raftRpc = raftRpc;
         this.config = config;
@@ -125,6 +131,11 @@ export class RaftServer {
         rpc.on('onRpcRequestVoteResponse', this.onRpcRequestVoteResponse.bind(this));
         rpc.on('onRpcAppendEntriesRequest', this.onRpcAppendEntriesRequest.bind(this));
         rpc.on('onRpcAppendEntriesResponse', this.onRpcAppendEntriesResponse.bind(this));
+        this.roleBehaviors = {
+            "0": new FollowerBehavior(this),
+            "1": new CandidateBehavior(this),
+            "2": new LeaderBehavior(this)
+        }
     }
 
     now(): number {
@@ -143,52 +154,14 @@ export class RaftServer {
 
 
     loop() {
-        if (this.role === RaftRole.Follower) this.loopOfFollower();
-        else if (this.role === RaftRole.Leader) this.loopOfLeader();
-        else if (this.role === RaftRole.Candidate) this.loopOfCandidate();
-        else throw Error("Wrong Role " + this.role);
+        this.nowBehavior.loop();
     }
 
-    loopOfLeader() {
-        let timerConfig = this.config.timerConfig;
-        if (this.now() - this._timestampOfLeaderHeartLastSend > timerConfig.coldTimeOfLeaderHeart) {
-            this._timestampOfLeaderHeartLastSend = this.now();
-            for (const node of this.otherNode) this.raftRpc.rpcAppendEntries(node, {
-                entries: [],
-                leaderCommitIndex: this.commitIndex,
-                leaderId: this.myId,
-                prevLogIndex: this.lastLogIndex,
-                prevLogTerm: this.lastLogTerm,
-                term: this.currentTerm
-            });
-        }
-    }
-
-    loopOfFollower() {
-        let timerConfig = this.config.timerConfig;
-        if (this.now() - this._timestampOfLeaderHeart > timerConfig.timeoutOfNoLeaderHeart) {
-            this.logMe("No Leader I will be Candidate");
-            this.role = RaftRole.Candidate;
-            this.currentTerm++;
-            this.whoVotedMe.clear();
-            this._timestampOfBecomeCandidate = this.now();
-            for (const node of this.otherNode)
-                this.raftRpc.rpcRequestVote(node, {
-                    candidateId: this.myId,
-                    lastLogIndex: this.lastLogIndex,
-                    lastLogTerm: this.lastLogTerm,
-                    term: this.currentTerm
-                })
-
-        }
-    }
-
-
-    private get lastLogTerm() {
+    get lastLogTerm() {
         return this.lastLog?.term ?? 0;
     }
 
-    private get lastLogIndex() {
+    get lastLogIndex() {
         return this.lastLog?.index ?? 0;
     }
 
@@ -196,56 +169,184 @@ export class RaftServer {
         return this.log.length > 0 ? this.log[this.log.length - 1] : null;
     }
 
+    get nowBehavior(): BaseRoleBehavior {
+        return this.roleBehaviors[this.role];
+    }
 
-    private logMe(msg: string): void {
+    logMe(msg: string): void {
         let date = new Date(Math.floor(this.now()));
         let nowStr = date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds() + ":" + date.getMilliseconds();
         console.log(`${nowStr}: \x1b[${41 + this.config.myId};30m[server:${this.config.myId} role:${RaftRole[this.role]} term:${this.currentTerm}]\x1b[0m:` + msg);
     }
 
-    loopOfCandidate() {
-        let timerConfig = this.config.timerConfig;
-        if (this.now() - this._timestampOfBecomeCandidate > timerConfig.timeoutOfNoLeaderElected) {
-            this.logMe("No Election Winner I will be Follower");
-            this._timestampOfLeaderHeart = this.now() + this.randOf(timerConfig.timeoutOfNoLeaderHeart);
-            this.role = RaftRole.Follower;
-        }
-    }
-
-
     private randOf(max: number) {
         return Math.random() * max;
     }
 
-    private onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
-        this.logMe("recv RequestVote From server:" + from.id);
-        if (this.role === RaftRole.Follower) {
-            if (this.votedFor === -1 && this.lastLogIndex <= req.lastLogIndex && this.lastLogTerm <= req.lastLogTerm) {
-                this.raftRpc.rpcRtnRequestVote(from, {success: true, term: this.currentTerm})
-                this.votedFor = from.id;
-            }
+    private roleCheckLoop(action: Function) {
+        for (let i = 0; i < 3; ++i) {
+            let lastRole = this.role;
+            action();
+            let nowRole = this.role;
+            if (nowRole === lastRole) break;
         }
+    }
+
+    private onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
+        this.roleCheckLoop(() => this.nowBehavior.onRpcRequestVoteRequest(req, from));
     }
 
     private onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode) {
-        if (this.role !== RaftRole.Candidate) return
-        if (res.success) {
-            this.whoVotedMe.add(from.id);
-            if (this.whoVotedMe.size >= this.otherNode.length / 2) {
-                this.logMe("I Get Enough Vote :" + [...this.whoVotedMe.values()]);
-                this.role = RaftRole.Leader;
+        this.roleCheckLoop(() => this.nowBehavior.onRpcRequestVoteResponse(res, from));
+    }
+
+    private onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
+        this.roleCheckLoop(() => this.nowBehavior.onRpcAppendEntriesRequest(req, from));
+    }
+
+    private onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode) {
+        this.roleCheckLoop(() => this.nowBehavior.onRpcAppendEntriesResponse(res, from));
+    }
+
+    becomeFollower() {
+        this.role = RaftRole.Follower;
+        this._timestampOfLeaderHeart = this.now() + this.randOf(this.config.timerConfig.timeoutOfNoLeaderHeart);
+    }
+}
+
+abstract class BaseRoleBehavior {
+    _this: RaftServer;
+
+    public constructor(_this: RaftServer) {
+        this._this = _this;
+    }
+
+    public abstract loop(): void;
+
+    onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode): void {
+        this.updateTerm(req);
+    }
+
+    onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode): void {
+        this.updateTerm(res);
+    }
+
+    onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode): void {
+        this.updateTerm(req);
+    }
+
+    onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode): void {
+        this.updateTerm(res);
+    }
+
+    private updateTerm(data: RaftRequest) {
+        let _this = this._this;
+        if (data.term > _this.currentTerm) {
+            _this.logMe("my term < " + data.term + " I gonna be Follower");
+            _this.votedFor = -1;
+            _this.currentTerm = data.term;
+            _this.becomeFollower();
+        }
+    }
+}
+
+class FollowerBehavior extends BaseRoleBehavior {
+    loop(): void {
+        let _this = this._this;
+        let timerConfig = _this.config.timerConfig;
+        if (_this.now() - _this._timestampOfLeaderHeart > timerConfig.timeoutOfNoLeaderHeart) {
+            _this.logMe("No Leader I will be Candidate");
+            _this.role = RaftRole.Candidate;
+            _this.currentTerm++;
+            _this.whoVotedMe.clear();
+            _this._timestampOfBecomeCandidate = _this.now();
+            for (const node of _this.otherNode)
+                _this.raftRpc.rpcRequestVote(node, {
+                    candidateId: _this.myId,
+                    lastLogIndex: _this.lastLogIndex,
+                    lastLogTerm: _this.lastLogTerm,
+                    term: _this.currentTerm
+                })
+        }
+    }
+
+    onRpcRequestVoteRequest(req: RequestVoteRequest, from: RaftNode) {
+        super.onRpcRequestVoteRequest(req, from);
+        let _this = this._this;
+        _this.logMe("recv RequestVote From server:" + from.id);
+        if (_this.role === RaftRole.Follower) {
+            if (_this.votedFor === -1
+                && _this.currentTerm <= req.term
+                && _this.lastLogIndex <= req.lastLogIndex
+                && _this.lastLogTerm <= req.lastLogTerm) {
+                _this.votedFor = from.id;
+                _this.raftRpc.rpcRtnRequestVote(from, {voteGranted: true, term: _this.currentTerm})
+            } else {
+                _this.raftRpc.rpcRtnRequestVote(from, {voteGranted: false, term: _this.currentTerm})
             }
         }
     }
 
-    private onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
-        this._timestampOfLeaderHeart = this.now();
-        this.votedFor = -1;
-        this.currentTerm = req.term;
-    }
-
-    private onRpcAppendEntriesResponse(res: AppendEntriesResponse, from: RaftNode) {
-
+    onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
+        super.onRpcAppendEntriesRequest(req, from);
+        let _this = this._this;
+        if (req.entries.length == 0) {
+            _this._timestampOfLeaderHeart = _this.now();
+            _this.votedFor = -1;
+        }
+        _this.currentTerm = req.term;
     }
 }
 
+class CandidateBehavior extends BaseRoleBehavior {
+    loop(): void {
+        let _this = this._this;
+        let timerConfig = _this.config.timerConfig;
+        if (_this.now() - _this._timestampOfBecomeCandidate > timerConfig.timeoutOfNoLeaderElected) {
+            _this.logMe("No Election Winner I will be Follower");
+            _this.becomeFollower();
+        }
+    }
+
+
+    onRpcRequestVoteResponse(res: RequestVoteResponse, from: RaftNode) {
+        super.onRpcRequestVoteResponse(res, from);
+        let _this = this._this;
+        if (_this.role !== RaftRole.Candidate) return
+        if (res.voteGranted) {
+            _this.whoVotedMe.add(from.id);
+            if (_this.whoVotedMe.size >= _this.otherNode.length / 2) {
+                _this.logMe("I Get Enough Vote :" + [..._this.whoVotedMe.values()]);
+                _this.role = RaftRole.Leader;
+            }
+        }
+    }
+
+    onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
+        super.onRpcAppendEntriesRequest(req, from);
+        let _this = this._this;
+        if (req.term >= _this.currentTerm) {
+            _this.logMe("Found Leader, I gonna be Follower");
+            _this.becomeFollower();
+        }
+    }
+}
+
+class LeaderBehavior extends BaseRoleBehavior {
+    loop(): void {
+        let _this = this._this;
+        let timerConfig = _this.config.timerConfig;
+        if (_this.now() - _this._timestampOfLeaderHeartLastSend > timerConfig.coldTimeOfLeaderHeart) {
+            _this._timestampOfLeaderHeartLastSend = _this.now();
+            for (const node of _this.otherNode) _this.raftRpc.rpcAppendEntries(node, {
+                entries: [],
+                leaderCommitIndex: _this.commitIndex,
+                leaderId: _this.myId,
+                prevLogIndex: _this.lastLogIndex,
+                prevLogTerm: _this.lastLogTerm,
+                term: _this.currentTerm
+            });
+        }
+    }
+
+}
