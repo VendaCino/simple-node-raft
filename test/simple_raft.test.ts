@@ -132,6 +132,7 @@ class SimpleRaftTest {
         ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
         let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
         assert.isTrue(sameLogLength > nodes.length / 2);
+        leader.start();
     }
 
     @timeout(5000)
@@ -157,6 +158,24 @@ class SimpleRaftTest {
         ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
         let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
         assert.isTrue(sameLogLength > nodes.length / 2);
+    }
+
+    @timeout(5000)
+    @test
+    async 'Client Add Log Length '() {
+        await sleep(500);
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        ss.forEach(e => e.logMe(RaftRole[e.role]));
+        let result2 = leader.submitLog("key2", {});
+        let result3 = leader.submitLog("key3", {});
+        let result4 = leader.submitLog("key4", {});
+        assert.isTrue(await result2);
+        assert.isTrue(await result3);
+        assert.isTrue(await result4);
+        await sleep(1500);
+        let leaderLogLength = leader.persis.log.length;
+        console.log(leaderLogLength);
+        ss.forEach(e => assert.equal(leaderLogLength, e.persis.log.length));
     }
 
 }

@@ -17,15 +17,21 @@ export class InMemRaftPersistence implements RaftPersistence {
         return this.log[index];
     }
 
-    push(log: RaftLog): boolean {
-        if (this.log[log.index] === undefined) {
-            this.log[log.index] = log;
-            return true;
-        } else return false;
+    async push(logs: RaftLog[]): Promise<boolean> {
+        for (let log of logs) {
+            if (this.log[log.index] === undefined) {
+                this.log[log.index] = log;
+            } else {
+                console.error("wrong index")
+                return false;
+            }
+        }
+        return true;
     }
 
-    remove(startIndex: number): void {
+    async remove(startIndex: number): Promise<void> {
         this.log = this.log.slice(0, startIndex);
     }
 
 }
+

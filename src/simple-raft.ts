@@ -111,9 +111,9 @@ export interface RaftPersistence {
 
     getLog(index: number, term?: number): RaftLog | null;
 
-    push(log: RaftLog): boolean;
+    push(log: RaftLog[]): Promise<boolean>;
 
-    remove(startIndex: number): void;
+    remove(startIndex: number): Promise<void>;
 
     getEntries(startIndex: number, endIndex?: number): Array<RaftLog>;
 }
@@ -273,8 +273,9 @@ export class RaftServer {
     async submitLog(key: string, data: Object): Promise<Boolean> {
         if (this.role === RaftRole.Leader) {
             let index = this.lastLog.index + 1;
-            this.persis.push({data: data, index: index, key: key, term: this.currentTerm});
-            return new Promise((resolve => this.logIndexResolve.set(index, resolve)));
+            let rr: Promise<Boolean> = new Promise((resolve => this.logIndexResolve.set(index, resolve)));
+            await this.persis.push([{data: data, index: index, key: key, term: this.currentTerm}]);
+            return rr;
         } else return false;
     }
 
@@ -374,6 +375,7 @@ class FollowerBehavior extends BaseRoleBehavior {
         }
     }
 
+    private onProcessingAppendEntriesRequest = false;
     onRpcAppendEntriesRequest(req: AppendEntriesRequest, from: RaftNode) {
         super.onRpcAppendEntriesRequest(req, from);
         let _this = this._this;
@@ -385,6 +387,8 @@ class FollowerBehavior extends BaseRoleBehavior {
         _this._timestampOfLeaderHeart = _this.now();
         if (req.entries.length === 0) return;
 
+        if (this.onProcessingAppendEntriesRequest) return;
+        this.onProcessingAppendEntriesRequest = true;
         let matchLogs = _this.persis.getLog(req.prevLogIndex, req.term);
         if (matchLogs === null) {
             _this.logMe(`I get Log bug but no match ` + `\x1b[30;30m data:${JSON.stringify(req)}\x1b[0m`);
@@ -392,21 +396,24 @@ class FollowerBehavior extends BaseRoleBehavior {
             let indexSameLogs = _this.persis.getLog(req.prevLogIndex);
             if (indexSameLogs != null) {
                 _this.logMe(`I clear my old log ${indexSameLogs.index}`);
-                _this.persis.remove(indexSameLogs.index)
+                _this.persis.remove(indexSameLogs.index).then(() => this.onProcessingAppendEntriesRequest = false);
             }
             return;
         } else {
             _this.logMe(`I add new log ` + `\x1b[30;30m entries:${JSON.stringify(req.entries)}\x1b[0m`);
-            req.entries.forEach(e => _this.persis.push(e));
-            if (req.leaderCommitIndex > _this.commitIndex) {
-                _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
-            }
+            _this.persis.push(req.entries).then(() => {
+                this.onProcessingAppendEntriesRequest = false;
+                if (req.leaderCommitIndex > _this.commitIndex) {
+                    _this.commitIndex = Math.min(req.leaderCommitIndex, _this.lastLog.index);
+                }
+                _this.raftRpc.rpcRtnAppendEntries(from, {
+                    matchIndex: _this.lastLog.index,
+                    success: true,
+                    term: _this.currentTerm
+                });
+            })
         }
-        _this.raftRpc.rpcRtnAppendEntries(from, {
-            matchIndex: _this.lastLog.index,
-            success: true,
-            term: _this.currentTerm
-        });
+
     }
 }
 
