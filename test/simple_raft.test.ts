@@ -1,4 +1,4 @@
-import {suite, test} from '@testdeck/mocha';
+import {suite, test, timeout} from '@testdeck/mocha';
 import {
     makeDefaultRaftTimerConfig,
     RaftConfig,
@@ -31,7 +31,7 @@ function makeNode(id: number): RaftNode {
 }
 
 const nodes: Array<RaftNode> = [makeNode(1), makeNode(2), makeNode(3),
-    // makeNode(4), makeNode(5)
+    makeNode(4), makeNode(5)
 ];
 const timerConfig = makeDefaultRaftTimerConfig(5);
 
@@ -44,7 +44,8 @@ function makeConfig(id: number): RaftConfig {
 const ss: Array<RaftServer> = [];
 nodes.forEach(e => ss.push(new TestRaftServer(new RaftRpcSocketIo(makeConfig(e.id)), makeConfig(e.id))));
 
-@suite
+@timeout(5000)
+@suite()
 class SimpleRaftTest {
 
     static before(done) {
@@ -84,11 +85,78 @@ class SimpleRaftTest {
 
     @test
     async 'Client Add Log'() {
+        await sleep(500);
         let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
         let result = await leader.submitLog("key", {});
         let leaderLog = leader.lastLog;
+        console.log(leaderLog);
         assert.isTrue(result);
-        ss.forEach(e => assert.deepEqual(e.lastLog, leaderLog));
+        ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
+        let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
+        assert.isTrue(sameLogLength > nodes.length / 2);
+    }
+
+    @test
+    async 'Client Add Log 2'() {
+        await sleep(500);
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        let result2 = leader.submitLog("key2", {});
+        let result3 = leader.submitLog("key3", {});
+        let result4 = leader.submitLog("key4", {});
+        assert.isTrue(await result2);
+        assert.isTrue(await result3);
+        let leaderLog = leader.lastLog;
+        console.log(leaderLog);
+        ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
+        let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
+        assert.isTrue(sameLogLength > nodes.length / 2);
+    }
+
+    @timeout(5000)
+    @test
+    async 'Client Add Log 3'() {
+        await sleep(500);
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        let result2 = leader.submitLog("key2", {});
+        await sleep(500);
+        let result3 = leader.submitLog("key3", {});
+        leader.end();
+        await sleep(500);
+        let leader2 = ss.filter(e => e.role === RaftRole.Leader && e !== leader)[0];
+        let result4 = leader2.submitLog("key4", {});
+        assert.isTrue(await result2);
+        assert.isFalse(await result3);
+        assert.isTrue(await result4);
+        let leaderLog = leader2.lastLog;
+        console.log(leaderLog);
+        ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
+        let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
+        assert.isTrue(sameLogLength > nodes.length / 2);
+    }
+
+    @timeout(5000)
+    @test
+    async 'Client Add Log 4'() {
+        await sleep(500);
+        let leader = ss.filter(e => e.role === RaftRole.Leader)[0];
+        let result2 = leader.submitLog("key2", {});
+        await sleep(500);
+        let result3 = leader.submitLog("key3", {});
+        leader.end();
+        await sleep(500);
+        let leader2 = ss.filter(e => e.role === RaftRole.Leader && e !== leader)[0];
+        let result4 = leader2.submitLog("key4", {});
+        leader.start();
+        let result5 = leader.submitLog("key4", {});
+        assert.isTrue(await result2);
+        assert.isFalse(await result3);
+        assert.isTrue(await result4);
+        assert.isFalse(await result5);
+        let leaderLog = leader2.lastLog;
+        console.log(leaderLog);
+        ss.forEach(e => e.logMe(JSON.stringify(e.lastLog)));
+        let sameLogLength = ss.filter(e => JSON.stringify(e.lastLog) === JSON.stringify(leaderLog)).length;
+        assert.isTrue(sameLogLength > nodes.length / 2);
     }
 
 }

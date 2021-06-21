@@ -151,9 +151,9 @@ export class RaftServer {
     }
 
     start() {
+        this.becomeFollower();
         this.raftRpc.start();
         this._interval = setInterval(() => this.loop(), 25);
-        this.becomeFollower();
     }
 
     end() {
@@ -224,7 +224,10 @@ export class RaftServer {
     }
 
     becomeCandidate() {
-        if (this.role === RaftRole.Follower) this.role = RaftRole.Candidate;
+        if (this.role === RaftRole.Follower) {
+            this.role = RaftRole.Candidate;
+            this.votedFor = this.myId;
+        }
     }
 
     becomeLeader() {
@@ -238,9 +241,11 @@ export class RaftServer {
     }
 
     async submitLog(key: string, data: Object): Promise<Boolean> {
-        let index = this.lastLogIndex + 1;
-        this.log.push({data: data, index: index, key: key, term: this.currentTerm});
-        return new Promise((resolve => this.logIndexResolve.set(index, resolve)));
+        if (this.role === RaftRole.Leader) {
+            let index = this.lastLogIndex + 1;
+            this.log.push({data: data, index: index, key: key, term: this.currentTerm});
+            return new Promise((resolve => this.logIndexResolve.set(index, resolve)));
+        } else return false;
     }
 
     private clearAllUnResolve(): void {
@@ -256,6 +261,7 @@ export class RaftServer {
         if (this.logIndexResolve.has(index)) this.logIndexResolve.get(index)!(true);
         return;
     }
+
 }
 
 abstract class BaseRoleBehavior {
